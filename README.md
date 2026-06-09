@@ -1,8 +1,8 @@
-# App to Cloudflare — Claude Code Skill
+# AI Builder App to Cloudflare Skill
 
 A general method for migrating an app off **any** hosted platform — AI app builders, no-code/low-code tools, or hosted backends — and onto Cloudflare (Pages/Workers + D1 + R2 + Workers AI).
 
-Not a recipe for five platforms — a repeatable method that works for a source you've never seen:
+A repeatable method that works for a application source:
 
 > **Acquire → Analyze → Classify → Plan → Provision → Transform → Migrate data → Verify**
 
