@@ -184,6 +184,61 @@ Every platform generates boilerplate files that need to go. Common ones:
 
 **Replit:** `.replit`, `replit.nix`, Replit-specific DB imports
 
+#### Watch out: virtual modules vs real files
+
+Some platforms generate SDK imports that **don't exist as real files** — they're resolved at build time by a Vite or webpack plugin. If you delete the plugin and the import path still doesn't exist on disk, the build will fail with "Cannot resolve module."
+
+Check for this before assuming an import is a real file:
+```bash
+# Does this module actually exist on disk?
+find src/ -name "Lesson.*" -o -name "entities.*" -o -name "base44Client.*"
+
+# Or grep for the Vite plugin that generates them
+grep -r "vite-plugin\|virtualModule\|resolve.*virtual" vite.config.*
+```
+
+**Base44** is the main offender: `@base44/vite-plugin` generates all `@/entities/*` and `@/integrations/*` as virtual modules. They have no files on disk. Fix: create real `src/entities/Lesson.js` etc. that import from your new `src/api/client.js`.
+
+**Lovable/Bolt** use real files for Supabase (`src/integrations/supabase/client.ts` exists). No virtual module issue.
+
+**V0/Next.js** uses real files throughout. No virtual module issue.
+
+#### Rewrite the app entry point
+
+Every platform injects routing + auth scaffolding into `src/App.jsx` (or `src/main.tsx`, `app/layout.tsx`) that breaks once the platform SDK is removed. Don't try to patch it — rewrite it cleanly.
+
+The pattern for a React + react-router app (Base44, Lovable, Bolt):
+
+```jsx
+// src/App.jsx — clean version after platform scaffolding removed
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClientInstance } from '@/lib/query-client'
+import { Toaster } from '@/components/ui/toaster'
+import Layout from './Layout'
+import Home from './pages/Home'
+import Dashboard from './pages/Dashboard'
+// ... other pages
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClientInstance}>
+      <Router>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/Dashboard" element={<Layout><Dashboard /></Layout>} />
+          {/* add remaining pages */}
+        </Routes>
+      </Router>
+      <Toaster />
+    </QueryClientProvider>
+  )
+}
+export default App
+```
+
+Remove: `VisualEditAgent`, `NavigationTracker`, `AuthContext`, `pagesConfig`, any `isLoadingPublicSettings` / `navigateToLogin` logic — these are all platform-specific and have no equivalent on Cloudflare.
+
 ### 4b. Create the API client
 
 Replace platform SDK calls with `fetch()` calls to your own Pages Functions:
@@ -245,9 +300,26 @@ Create a Pages Function for each backend service. Use the code templates in [clo
 1. **Clean `package.json`** — remove platform SDKs (`@base44/sdk`, `@supabase/supabase-js`, `@vercel/*`, etc.) and unused deps
 2. **Audit UI components** — AI builders scaffold 30-50 shadcn/ui components; most are unused. Delete what's not imported.
 3. **Add SPA fallback** — create `public/_redirects` with `/* /index.html 200`
-4. **Build:** `npm run build`
-5. **Deploy:** `npx wrangler pages deploy dist`
-6. **Run migrations:** `npx wrangler d1 execute <db-name> --file=migrations/0001_initial.sql`
+4. **Build:** `npm run build` — fix any import errors before proceeding
+5. **Create the Pages project** (required before first deploy — this is separate from deploying):
+   ```bash
+   npx wrangler pages project create <project-name> --production-branch=main
+   ```
+6. **Activate Cloudflare services that need manual opt-in:**
+   - **R2** is not enabled by default. If your app uses file uploads/storage, go to [Cloudflare Dashboard → R2](https://dash.cloudflare.com/?to=/:account/r2) and click **Enable R2** before running `wrangler r2 bucket create`. Skipping this causes error 10042 and blocks deployment if the R2 binding is in `wrangler.toml`. If R2 isn't ready yet, comment out the `[[r2_buckets]]` binding and deploy without it — images will load from their original URLs until you're ready.
+   - **Workers AI** — available by default, no activation needed.
+   - **D1** — available by default, no activation needed.
+7. **Create D1 database and R2 bucket:**
+   ```bash
+   npx wrangler d1 create <db-name>         # copy the database_id into wrangler.toml
+   npx wrangler r2 bucket create <bucket-name>  # only after R2 is activated
+   ```
+8. **Deploy:** `npx wrangler pages deploy dist`
+9. **Run migrations:**
+   ```bash
+   npx wrangler d1 execute <db-name> --remote --file=migrations/0001_initial.sql
+   npx wrangler d1 execute <db-name> --remote --file=migrations/0002_seed.sql
+   ```
 
 ## Phase 6: Verify
 
