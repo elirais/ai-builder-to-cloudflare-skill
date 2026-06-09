@@ -7,18 +7,27 @@ description: Migrate apps built on AI app builder platforms (Base44, Lovable, Bo
 
 Migrate any app built on an AI app builder platform to Cloudflare Pages + Workers AI + D1 + R2. Covers Base44, Lovable, Bolt.new, V0, and Replit — the five most common platforms people want to migrate from.
 
-All these platforms generate React + Tailwind apps. The frontend is usually fine — the migration is really about **replacing the backend services** (database, auth, AI, file storage) with Cloudflare equivalents you own and control.
+Most of these platforms generate a **React + Tailwind SPA** (Base44, Lovable, Bolt — Vite builds to a static `dist/`). The frontend is usually fine — the migration is really about **replacing the backend services** (database, auth, AI, file storage) with Cloudflare equivalents you own and control.
+
+**Exception: V0 generates Next.js App Router** (React Server Components, Server Actions, route handlers) — that's a different build and deploy path, covered in Phase 5. Don't assume SPA for V0.
+
+## How to Use This Skill
+
+This skill is the **method** — the ordered sequence of steps to move an app off a builder platform and onto Cloudflare. It deliberately does **not** hardcode limits, pricing, model IDs, API signatures, or feature availability, because those change. For anything that can go stale, look it up live:
+
+- **Cloudflare Docs MCP** (`search_cloudflare_documentation`) — the source of truth for D1/R2 limits, Workers AI models and pricing, binding syntax, and current APIs. Query it before relying on any number. Use `migrate_pages_to_workers_guide` when a Pages→Workers question comes up.
+- **Official Cloudflare skills** — invoke these for the deep, current detail on each service. Don't reimplement what they cover:
+  - `wrangler` — CLI commands, `wrangler.toml`/`wrangler.jsonc` config, deploy flags
+  - `workers-best-practices` — D1 batching, transactions, the Sessions API, edge patterns
+  - `durable-objects` — anything realtime / stateful / WebSocket
+  - `cloudflare-email-service` — transactional email
+  - `agents-sdk`, `sandbox-sdk`, `web-perf` — as the app needs them
+
+When this skill says "check the docs" or "use the X skill," do it — don't guess from memory.
 
 ## Why Migrate
 
-AI app builders trade control for speed. That tradeoff stops making sense when:
-- You hit **scaling limits** (Base44's 100-user concurrent cap, Supabase free tier row limits)
-- You're paying **platform fees** for infrastructure that costs pennies on Cloudflare
-- The platform **injects tracking/branding** into your app (Base44 adds a 231KB badge script to every page load)
-- You want **edge performance** — Cloudflare Pages serves from 300+ global PoPs vs a single origin server
-- You need **AI at the edge** — Workers AI runs inference close to users instead of routing to a central API
-
-Real-world results from a production migration: 48% faster TTFB, 71% smaller payload, AI inference at $0.0003/call.
+AI app builders trade control for speed. That tradeoff stops making sense when you hit the platform's scaling limits, you're paying platform fees for infrastructure that's cheap to self-own, the platform injects tracking/branding into your bundle, or you want edge performance and edge AI you control. (For current Cloudflare limits and pricing to put in a before/after comparison, query the Docs MCP — don't quote stale figures.)
 
 ## Step 0: Identify the Platform
 
@@ -93,7 +102,7 @@ supabase db dump --data-only -f seed.sql
 # Or via dashboard: Table Editor → Export → CSV per table
 ```
 
-**General rule:** Export every table as INSERT statements into `migrations/0002_seed.sql`. For tables with more than 500 rows, batch the inserts.
+**General rule:** Export every table as INSERT statements into `migrations/0002_seed.sql`. D1 caps the size and bound-parameter count of a single statement, so don't pack hundreds of rows into one multi-row INSERT — generate individual (or small-batch) INSERTs, and for large tables prefer D1's CSV/file import. Check the current per-statement limits with the Docs MCP before generating the seed file.
 
 ## Phase 1: Discovery & Inventory
 
@@ -119,38 +128,20 @@ For Base44 apps specifically, also check for: `InvokeLLM`, `UploadFile`, `SendEm
 
 Every AI builder's backend maps to the same set of Cloudflare services:
 
-| Platform Feature | Cloudflare Replacement | Why It's Better |
+| Platform Feature | Cloudflare Replacement | Notes |
 |---|---|---|
-| Database (Supabase PostgreSQL / Base44 entities) | **D1** (SQLite at edge) | Zero cold starts, globally replicated reads, no connection pooling needed |
-| File storage (Supabase Storage / Base44 UploadFile) | **R2** (S3-compatible) | Zero egress fees, global distribution |
-| Auth (Supabase Auth / Base44 Auth / NextAuth) | **Cloudflare Access** or D1 + JWT | No third-party dependency, edge-verified |
-| AI / LLM calls (OpenAI API / Base44 InvokeLLM) | **Workers AI** | Runs on Cloudflare's GPU fleet, no API key management, $0.10/M tokens |
+| Database (Supabase PostgreSQL / Base44 entities) | **D1** (SQLite at edge) | Globally replicated reads, no connection pooling |
+| File storage (Supabase Storage / Base44 UploadFile) | **R2** (S3-compatible) | Zero egress fees |
+| Auth — **internal / admin tools** | **Cloudflare Access** (Zero Trust) | Only for team/admin gating, NOT public consumers |
+| Auth — **public B2C** (Supabase Auth / NextAuth) | **Auth.js, Lucia, or Better Auth** + D1 adapter | Cloudflare Access can't do consumer signup; use an edge-native auth library with its official D1 adapter |
+| AI / LLM calls (OpenAI API / Base44 InvokeLLM) | **Workers AI** | No API-key management; query Docs MCP for current models + pricing |
 | Serverless functions (Edge Functions / API routes) | **Pages Functions** | Same V8 isolate model, file-based routing |
-| Realtime (Supabase Realtime / .subscribe()) | **Durable Objects + WebSocket** | Complex — flag for manual work and explain what's involved |
-| Email (SendGrid / Resend / Base44 SendEmail) | **MailChannels** or Email Workers | Free via Cloudflare |
+| Realtime (Supabase Realtime / .subscribe()) | **Durable Objects** (or **PartyKit**, which wraps DO for WebSockets) | Use the `durable-objects` skill; flag as manual work |
+| Email (Resend / SendGrid / Base44 SendEmail) | **Email Workers / MailChannels** | Use the `cloudflare-email-service` skill |
 
-Generate `wrangler.toml` with only the bindings the app actually needs:
+Generate `wrangler.toml` with only the bindings the app actually needs — one binding per service the app uses (`[ai]`, `[[d1_databases]]`, `[[r2_buckets]]`, etc.), and nothing it doesn't. Set `compatibility_date` to today's date. For exact binding syntax and the latest config format (`wrangler.jsonc`), use the **`wrangler` skill** rather than copying a fixed template.
 
-```toml
-name = "app-name"
-pages_build_output_dir = "dist"
-compatibility_date = "2025-06-01"
-
-# Only include bindings for services the app uses:
-[ai]
-binding = "AI"
-
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "app-db"
-# database_id = "<from: npx wrangler d1 create app-db>"
-
-# [[r2_buckets]]
-# binding = "BUCKET"
-# bucket_name = "app-files"
-```
-
-See [cloudflare-services.md](references/cloudflare-services.md) for setup commands, code templates, and recommended models.
+See [cloudflare-services.md](references/cloudflare-services.md) for the binding examples and Pages Function code templates.
 
 ## Phase 3: Schema Migration
 
@@ -166,7 +157,12 @@ The schema mapping reference covers all conversion rules: [schema-mapping.md](re
 
 Generate migration file: `migrations/0001_initial.sql`
 
-For data export, use the platform's API or admin UI to pull records, then generate `INSERT` statements. For large datasets, batch in groups of 500.
+Before generating it, scan the source schema for two things D1 handles differently:
+
+- **Heavy columns** — AI builders often store uploaded images/avatars as base64 in a `TEXT`/`BYTEA` column. D1 has a hard per-row size cap and a modest per-database cap, so a blind copy will blow past them. Split that data out: upload the blobs to **R2** and store only the object key in D1.
+- **Transactions / RPCs** — D1 has no interactive `BEGIN…COMMIT`; multi-step logic (Supabase RPCs, Prisma `$transaction`) must be rewritten as `db.batch()` with all statements prepared upfront, intermediate reads pulled out. See the `workers-best-practices` skill.
+
+For the seed file (`migrations/0002_seed.sql`): generate individual/small-batch INSERTs, not one giant multi-row statement — see the per-statement limits note in Step 1. Confirm the current D1 limits with the Docs MCP.
 
 ## Phase 4: Code Transform
 
@@ -197,7 +193,13 @@ Replace platform SDK calls with the new client. Per-platform find-and-replace ta
 
 One function per backend service. Templates for D1 CRUD, R2 upload, Workers AI, auth: [cloudflare-services.md](references/cloudflare-services.md).
 
+**Read-your-own-writes:** D1 reads can hit a replica that hasn't caught up to a just-committed write (e.g. sign up → immediately redirect → "user not found"). Where a write is followed by a read that depends on it, use the **D1 Sessions API** to pass a bookmark between them. See the `workers-best-practices` skill.
+
 ## Phase 5: Build & Deploy
+
+The build/deploy path depends on what the frontend is.
+
+**SPA path (Base44 / Lovable / Bolt — Vite → static `dist/`):**
 
 1. **Clean `package.json`** — remove platform SDKs and unused deps
 2. **Audit UI components** — scaffold generates 30–50 shadcn/ui components; delete unused ones
@@ -209,6 +211,8 @@ One function per backend service. Templates for D1 CRUD, R2 upload, Workers AI, 
 7. **Deploy:** `npx wrangler pages deploy dist`
 8. **Run migrations:** `npx wrangler d1 execute <db> --remote --file=migrations/0001_initial.sql`
 
+**Next.js path (V0):** Don't rewrite Server Actions/route handlers into Pages Functions. Deploy with the official Workers Next.js adapter (`@opennextjs/cloudflare`, formerly `@cloudflare/next-on-pages`) and mark server code for the edge runtime (`export const runtime = 'edge'`). Confirm the current adapter and steps with the Docs MCP (`migrate_pages_to_workers_guide`) and the `wrangler` skill before starting — this path changes faster than the SPA one.
+
 ## Phase 6: Verify
 
 1. Test every feature manually
@@ -218,11 +222,11 @@ One function per backend service. Templates for D1 CRUD, R2 upload, Workers AI, 
 
 ## Workers AI Notes
 
-Hard-won knowledge from real migrations. Full code snippets in [cloudflare-services.md](references/cloudflare-services.md).
+Behavioral gotchas that hold regardless of which model you pick. Full code snippets in [cloudflare-services.md](references/cloudflare-services.md). For the current model catalog and pricing, query the Docs MCP — model names below are illustrative, not recommendations.
 
-- **Response format varies by model.** Newer models (Gemma 4, Kimi K2.6) return OpenAI chat format; older ones return `response.response`. Always handle both — see cloudflare-services.md for the wrapper.
-- **Disable thinking mode** with `chat_template_kwargs: { thinking: false }`. Without this, reasoning models (Gemma 4, Kimi K2.6) spend all tokens on chain-of-thought and return `content: null`. This is the #1 cause of "AI call returns nothing."
-- **Set `max_tokens: 2048` minimum.** Default is often 256, which cuts off mid-JSON.
+- **Response format varies by model.** Some return OpenAI chat format (`choices[0].message.content`), others return `response.response`. Always handle both — see cloudflare-services.md for the wrapper.
+- **Disable thinking mode** with `chat_template_kwargs: { thinking: false }`. Reasoning models otherwise spend all tokens on chain-of-thought and return `content: null`. This is the #1 cause of "AI call returns nothing."
+- **Raise `max_tokens`.** The default is low and cuts off mid-JSON. Set a generous ceiling for structured responses.
 - **Vision input** uses a content array, not a plain string prompt — see cloudflare-services.md.
 - **JSON from models** often comes wrapped in markdown fences or `<think>` tags. Strip before parsing — see cloudflare-services.md for the helper.
 

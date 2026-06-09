@@ -22,15 +22,6 @@ Once installed, the skill loads automatically when you ask Claude to migrate —
 
 The skill auto-detects your platform from imports and walks through 6 phases: detect → discover → infrastructure → schema → code transform → deploy.
 
-## Results
-
-| | Before | After |
-|---|---|---|
-| TTFB | 538ms | 279ms (48% faster) |
-| Payload | 264KB | 67KB (71% smaller) |
-| AI cost | Platform subscription | $0.0003 per call |
-| Vendor lock-in | Yes | Gone |
-
 ## What's Inside
 
 - **5 platform SDKs** — exact migration patterns for Base44, Supabase (Lovable/Bolt), Next.js (V0), Replit
