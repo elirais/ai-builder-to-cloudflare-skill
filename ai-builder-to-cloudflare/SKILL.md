@@ -97,7 +97,8 @@ For each capability from Phase 2B, choose the best-match Cloudflare primitive fo
 
 | Capability | Cloudflare candidate |
 |---|---|
-| Relational database | **D1** (SQLite at the edge) |
+| Relational database — new or migrated | **D1** (SQLite at the edge) |
+| Existing Postgres / MySQL — keep it | **Hyperdrive** (edge proxy to your existing DB — avoids a full schema migration) |
 | Simple key/value | **KV** |
 | Per-entity coordination | **Durable Objects** |
 | File / blob storage | **R2** |
@@ -137,10 +138,10 @@ Create the agreed resources and wire bindings in `wrangler` config. Use the **`w
 3. **Rewrite server logic** as Pages Functions or Workers, one per capability.
 4. **Honor the runtime shape:**
    - Static SPA → build to assets, add `public/_redirects: /* /index.html 200`.
-   - SSR / Next.js → use the official Cloudflare Next.js adapter (`@opennextjs/cloudflare`), mark server code `export const runtime = 'edge'`. Confirm current adapter via Docs MCP — don't force it into an SPA deploy.
+   - SSR / Next.js → **the official Cloudflare adapter (`@cloudflare/next-on-pages`) is deprecated and unmaintained since 2024.** Before assuming Cloudflare is the right target for a Next.js app: (a) the community adapter `@opennextjs/cloudflare` exists — check its current state via Docs MCP; (b) consider recommending the user switch to SvelteKit, Astro, or Nuxt, which have full first-class Cloudflare Pages support; (c) staying on Vercel may be the pragmatic choice for heavily Next.js-coupled apps. Surface this decision to the user — it affects the whole plan.
 5. **Move third-party calls server-side** to avoid CORS and hide credentials.
 6. **Edge consistency:**
-   - Write followed immediately by a dependent read → use the **D1 Sessions API** to pass a bookmark. See `workers-best-practices`.
+   - Write followed immediately by a dependent read → use the **D1 Sessions API** to pass a bookmark. See `workers-best-practices`. Note: Sessions API requires the **Paid plan** — on the free tier, design around eventual consistency or use a single primary read.
    - Interactive transactions / RPCs → rewrite as `db.batch()` with statements prepared upfront.
 7. **Build and deploy:** `npm run build` (fix any errors), then `wrangler pages deploy dist` (SPA) or `wrangler deploy` (Worker). Use the `wrangler` skill for current deploy commands and flags.
 
