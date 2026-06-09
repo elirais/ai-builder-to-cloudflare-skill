@@ -174,152 +174,40 @@ For data export, use the platform's API or admin UI to pull records, then genera
 
 ### 4a. Delete platform scaffolding
 
-Every platform generates boilerplate files that need to go. Common ones:
+Every platform generates boilerplate files that need to go. The full per-platform delete list is in [platform-patterns.md](references/platform-patterns.md).
 
-**Base44:** `src/api/base44Client.js`, `src/api/entities.js`, `base44/` directory, `src/components/VisualEditAgent.jsx`, `src/components/NavigationTracker.jsx`, `src/pages.config.js`, `src/lib/app-params.js`
+Two things to check before deleting:
 
-**Lovable/Bolt (Supabase):** `src/integrations/supabase/client.ts`, `src/integrations/supabase/types.ts`, `supabase/` directory (Edge Functions — migrate the logic, not the files)
+- **Virtual modules (Base44 only):** `@base44/vite-plugin` generates `@/entities/*` and `@/integrations/*` at build time — these imports have no files on disk. Creating real wrapper files is required. See platform-patterns.md → "Virtual modules".
+- **App entry point:** `App.jsx` (or `app/layout.tsx`) contains platform-specific routing and auth scaffolding that breaks once the SDK is removed. Rewrite it cleanly rather than patching. See platform-patterns.md → "App entry point rewrite".
 
-**V0:** `.vercel/`, `vercel.json`, Next.js-specific API routes in `app/api/` (rewrite as Pages Functions)
+### 4b. Create the frontend API client
 
-**Replit:** `.replit`, `replit.nix`, Replit-specific DB imports
+Create `src/api/client.js` — the single file that replaces the entire platform SDK on the frontend. Full template in [cloudflare-services.md](references/cloudflare-services.md) → "Frontend API Client".
 
-#### Watch out: virtual modules vs real files
+Then create thin entity files so existing import paths keep working:
+- `src/entities/X.js` → re-exports from `db.x` in the client
+- `src/integrations/Core.js` → re-exports `uploadFile`, `invokeAI`, etc.
 
-Some platforms generate SDK imports that **don't exist as real files** — they're resolved at build time by a Vite or webpack plugin. If you delete the plugin and the import path still doesn't exist on disk, the build will fail with "Cannot resolve module."
+### 4c. Update SDK calls in components
 
-Check for this before assuming an import is a real file:
-```bash
-# Does this module actually exist on disk?
-find src/ -name "Lesson.*" -o -name "entities.*" -o -name "base44Client.*"
-
-# Or grep for the Vite plugin that generates them
-grep -r "vite-plugin\|virtualModule\|resolve.*virtual" vite.config.*
-```
-
-**Base44** is the main offender: `@base44/vite-plugin` generates all `@/entities/*` and `@/integrations/*` as virtual modules. They have no files on disk. Fix: create real `src/entities/Lesson.js` etc. that import from your new `src/api/client.js`.
-
-**Lovable/Bolt** use real files for Supabase (`src/integrations/supabase/client.ts` exists). No virtual module issue.
-
-**V0/Next.js** uses real files throughout. No virtual module issue.
-
-#### Rewrite the app entry point
-
-Every platform injects routing + auth scaffolding into `src/App.jsx` (or `src/main.tsx`, `app/layout.tsx`) that breaks once the platform SDK is removed. Don't try to patch it — rewrite it cleanly.
-
-The pattern for a React + react-router app (Base44, Lovable, Bolt):
-
-```jsx
-// src/App.jsx — clean version after platform scaffolding removed
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-import { QueryClientProvider } from '@tanstack/react-query'
-import { queryClientInstance } from '@/lib/query-client'
-import { Toaster } from '@/components/ui/toaster'
-import Layout from './Layout'
-import Home from './pages/Home'
-import Dashboard from './pages/Dashboard'
-// ... other pages
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClientInstance}>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/Dashboard" element={<Layout><Dashboard /></Layout>} />
-          {/* add remaining pages */}
-        </Routes>
-      </Router>
-      <Toaster />
-    </QueryClientProvider>
-  )
-}
-export default App
-```
-
-Remove: `VisualEditAgent`, `NavigationTracker`, `AuthContext`, `pagesConfig`, any `isLoadingPublicSettings` / `navigateToLogin` logic — these are all platform-specific and have no equivalent on Cloudflare.
-
-### 4b. Create the API client
-
-Replace platform SDK calls with `fetch()` calls to your own Pages Functions:
-
-```javascript
-// src/api/client.js — thin wrapper around your Pages Functions
-
-export async function query(endpoint, options = {}) {
-  const res = await fetch(`/api/${endpoint}`, {
-    method: options.method || 'GET',
-    headers: options.body ? { 'Content-Type': 'application/json' } : {},
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  if (!res.ok) throw new Error(`API ${endpoint}: ${res.status}`);
-  return res.json();
-}
-
-export const db = {
-  list:   (table) => query(`entities/${table}`),
-  get:    (table, id) => query(`entities/${table}/${id}`),
-  create: (table, data) => query(`entities/${table}`, { method: 'POST', body: data }),
-  update: (table, id, data) => query(`entities/${table}/${id}`, { method: 'PUT', body: data }),
-  delete: (table, id) => query(`entities/${table}/${id}`, { method: 'DELETE' }),
-};
-
-export const ai = {
-  run: (prompt, opts) => query('ai', { method: 'POST', body: { prompt, ...opts } }),
-};
-
-export const files = {
-  upload: async (file) => {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch('/api/upload', { method: 'POST', body: form });
-    if (!res.ok) throw new Error(`Upload: ${res.status}`);
-    return res.json();
-  },
-};
-```
-
-### 4c. Transform SDK calls in components
-
-Read [platform-patterns.md](references/platform-patterns.md) for the exact find-and-replace patterns for each platform. The general pattern:
-
-| Platform Call | Cloudflare Replacement |
-|---|---|
-| `Entity.list()` / `supabase.from('x').select()` | `db.list('x')` |
-| `Entity.create(data)` / `supabase.from('x').insert(data)` | `db.create('x', data)` |
-| `InvokeLLM({prompt})` / `openai.chat.completions.create()` | `ai.run(prompt)` |
-| `UploadFile({file})` / `supabase.storage.upload()` | `files.upload(file)` |
-| `auth.me()` / `supabase.auth.getUser()` | `fetch('/api/auth/me')` |
+Replace platform SDK calls with the new client. Per-platform find-and-replace table: [platform-patterns.md](references/platform-patterns.md).
 
 ### 4d. Generate Pages Functions
 
-Create a Pages Function for each backend service. Use the code templates in [cloudflare-services.md](references/cloudflare-services.md) — it has ready-to-use handlers for Workers AI, D1 CRUD, R2 uploads, and auth.
+One function per backend service. Templates for D1 CRUD, R2 upload, Workers AI, auth: [cloudflare-services.md](references/cloudflare-services.md).
 
 ## Phase 5: Build & Deploy
 
-1. **Clean `package.json`** — remove platform SDKs (`@base44/sdk`, `@supabase/supabase-js`, `@vercel/*`, etc.) and unused deps
-2. **Audit UI components** — AI builders scaffold 30-50 shadcn/ui components; most are unused. Delete what's not imported.
-3. **Add SPA fallback** — create `public/_redirects` with `/* /index.html 200`
-4. **Build:** `npm run build` — fix any import errors before proceeding
-5. **Create the Pages project** (required before first deploy — this is separate from deploying):
-   ```bash
-   npx wrangler pages project create <project-name> --production-branch=main
-   ```
-6. **Activate Cloudflare services that need manual opt-in:**
-   - **R2** is not enabled by default. If your app uses file uploads/storage, go to [Cloudflare Dashboard → R2](https://dash.cloudflare.com/?to=/:account/r2) and click **Enable R2** before running `wrangler r2 bucket create`. Skipping this causes error 10042 and blocks deployment if the R2 binding is in `wrangler.toml`. If R2 isn't ready yet, comment out the `[[r2_buckets]]` binding and deploy without it — images will load from their original URLs until you're ready.
-   - **Workers AI** — available by default, no activation needed.
-   - **D1** — available by default, no activation needed.
-7. **Create D1 database and R2 bucket:**
-   ```bash
-   npx wrangler d1 create <db-name>         # copy the database_id into wrangler.toml
-   npx wrangler r2 bucket create <bucket-name>  # only after R2 is activated
-   ```
-8. **Deploy:** `npx wrangler pages deploy dist`
-9. **Run migrations:**
-   ```bash
-   npx wrangler d1 execute <db-name> --remote --file=migrations/0001_initial.sql
-   npx wrangler d1 execute <db-name> --remote --file=migrations/0002_seed.sql
-   ```
+1. **Clean `package.json`** — remove platform SDKs and unused deps
+2. **Audit UI components** — scaffold generates 30–50 shadcn/ui components; delete unused ones
+3. **Add SPA fallback** — `public/_redirects`: `/* /index.html 200`
+4. **Build:** `npm run build` — resolve any import errors before continuing
+5. **Create the Pages project** (once, before first deploy):
+   `npx wrangler pages project create <name> --production-branch=main`
+6. **Create Cloudflare resources** — see [cloudflare-services.md](references/cloudflare-services.md) → "Deployment Gotchas" for activation steps, R2 opt-in, and the `--remote` flag for D1 migrations
+7. **Deploy:** `npx wrangler pages deploy dist`
+8. **Run migrations:** `npx wrangler d1 execute <db> --remote --file=migrations/0001_initial.sql`
 
 ## Phase 6: Verify
 
@@ -330,39 +218,13 @@ Create a Pages Function for each backend service. Use the code templates in [clo
 
 ## Workers AI Notes
 
-Hard-won knowledge from real migrations — these will save hours of debugging:
+Hard-won knowledge from real migrations. Full code snippets in [cloudflare-services.md](references/cloudflare-services.md).
 
-- **Response format varies by model.** Newer models (Gemma 4, Kimi K2.6) return OpenAI chat format: `response.choices[0].message.content`. Older models return `response.response`. Always handle both:
-  ```javascript
-  const content = response.choices?.[0]?.message?.content ?? response.response;
-  ```
-
-- **Disable thinking mode** with `chat_template_kwargs: { thinking: false }`. Without this, models with built-in reasoning (Gemma 4, Kimi K2.6) spend all tokens on chain-of-thought and return `content: null`. This is the #1 cause of "my AI call returns nothing" bugs.
-
-- **Set `max_tokens: 2048` minimum.** The default is often 256, which cuts off mid-JSON-object. 2048 gives enough room for structured responses while keeping costs negligible ($0.0006 at Gemma 4 rates).
-
-- **Vision input format:** Use content array, not a plain string:
-  ```javascript
-  { role: 'user', content: [
-    { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } },
-    { type: 'text', text: 'Describe this image.' },
-  ]}
-  ```
-
-- **Model selection** — check Cloudflare's model catalog for the latest options. As of writing, good starting points are:
-  - **Vision/OCR/multilingual:** `@cf/google/gemma-4-26b-a4b-it` ($0.10/M input) — MoE architecture, only 4B active params so it's fast and cheap
-  - **Complex reasoning fallback:** `@cf/moonshotai/kimi-k2.6` ($0.95/M input) — use when the primary model isn't accurate enough
-  - **Budget vision:** `@cf/meta/llama-3.2-11b-vision-instruct` ($0.049/M input)
-
-- **JSON parsing:** Models sometimes wrap JSON in markdown fences or thinking tags. Always strip before parsing:
-  ```javascript
-  function parseJSON(text) {
-    if (typeof text !== 'string') return text;
-    let s = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '');
-    s = s.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    return JSON.parse(s);
-  }
-  ```
+- **Response format varies by model.** Newer models (Gemma 4, Kimi K2.6) return OpenAI chat format; older ones return `response.response`. Always handle both — see cloudflare-services.md for the wrapper.
+- **Disable thinking mode** with `chat_template_kwargs: { thinking: false }`. Without this, reasoning models (Gemma 4, Kimi K2.6) spend all tokens on chain-of-thought and return `content: null`. This is the #1 cause of "AI call returns nothing."
+- **Set `max_tokens: 2048` minimum.** Default is often 256, which cuts off mid-JSON.
+- **Vision input** uses a content array, not a plain string prompt — see cloudflare-services.md.
+- **JSON from models** often comes wrapped in markdown fences or `<think>` tags. Strip before parsing — see cloudflare-services.md for the helper.
 
 ## Common Pitfalls
 

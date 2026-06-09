@@ -65,6 +65,65 @@ Base44 uses MongoDB-style queries. These need to become SQL WHERE clauses:
 
 Full query translation table: see schema-mapping.md.
 
+### Virtual modules — Base44 only
+
+`@base44/vite-plugin` generates `@/entities/*` and `@/integrations/*` as **virtual modules** at build time. These imports have no files on disk. Once you remove the plugin they will fail to resolve.
+
+Check before assuming any import is a real file:
+```bash
+grep -r "vite-plugin" vite.config.* && find src/ -path "*/entities/*.js" -o -path "*/integrations/*.js"
+```
+
+Fix: create a real file for each virtual module that re-exports from your new `src/api/client.js`:
+```javascript
+// src/entities/Lesson.js
+import { db } from '@/api/client';
+export const Lesson = db.lessons;
+
+// src/integrations/Core.js
+import { uploadFile } from '@/api/client';
+export const UploadFile = async ({ file }) => {
+  const result = await uploadFile(file);
+  return { file_url: result.file_url };
+};
+```
+
+Repeat for every entity and integration the app imports. Lovable/Bolt/V0/Replit don't have this issue — their imports are real files.
+
+### App entry point rewrite — Base44
+
+Base44 injects `VisualEditAgent`, `NavigationTracker`, `AuthContext`, and `pagesConfig` into `App.jsx`. All of these come from Base44's virtual modules and break once the SDK is removed. Rewrite `App.jsx` cleanly — don't patch it:
+
+```jsx
+// src/App.jsx — clean replacement
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClientInstance } from '@/lib/query-client'
+import { Toaster } from '@/components/ui/toaster'
+import Layout from './Layout'
+// import each page from src/pages/
+import Home from './pages/Home'
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClientInstance}>
+      <Router>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          {/* one Route per page in src/pages/ */}
+        </Routes>
+      </Router>
+      <Toaster />
+    </QueryClientProvider>
+  )
+}
+export default App
+```
+
+Remove: `VisualEditAgent`, `NavigationTracker`, `AuthContext`, `pagesConfig`, `isLoadingPublicSettings`, `navigateToLogin`.
+
+For Lovable/Bolt: same pattern but remove the Supabase `<SessionContextProvider>` wrapper. For V0: `app/layout.tsx` replaces `App.jsx` — remove `<VercelAnalytics />` and `<SpeedInsights />`.
+
 ---
 
 ## Lovable / Bolt.new (Supabase)

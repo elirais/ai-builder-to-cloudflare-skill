@@ -326,3 +326,104 @@ export async function onRequestPost({ request, env }) {
   return Response.json({ url: `/files/${key}`, file_url: `/files/${key}` });
 }
 ```
+
+---
+
+## Frontend API Client (`src/api/client.js`)
+
+Thin wrapper that replaces the platform SDK on the frontend. All pages and components import from here instead of `@base44/sdk` or `@supabase/supabase-js`.
+
+```javascript
+// src/api/client.js
+async function request(path, options = {}) {
+  const res = await fetch(`/api/${path}`, {
+    method: options.method || 'GET',
+    headers: options.body ? { 'Content-Type': 'application/json' } : {},
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if (!res.ok) throw new Error(`API ${path}: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+function makeEntity(table) {
+  return {
+    list: (sort) => request(`entities/${table}${sort ? `?sort=${sort}` : ''}`),
+    filter: (query, sort) => request(`entities/${table}/filter${sort ? `?sort=${sort}` : ''}`, { method: 'POST', body: query }),
+    get: (id) => request(`entities/${table}/${id}`),
+    create: (data) => request(`entities/${table}`, { method: 'POST', body: data }),
+    update: (id, data) => request(`entities/${table}/${id}`, { method: 'PUT', body: data }),
+    delete: (id) => request(`entities/${table}/${id}`, { method: 'DELETE' }),
+  };
+}
+
+// Add one entry per D1 table
+export const db = {
+  lessons: makeEntity('lessons'),
+  materials: makeEntity('materials'),
+  // ...
+};
+
+export const auth = {
+  me: () => request('auth/me'),
+};
+
+export async function uploadFile(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/upload', { method: 'POST', body: form });
+  if (!res.ok) throw new Error(`Upload: ${res.status}`);
+  return res.json(); // { file_url: '/files/...' }
+}
+```
+
+---
+
+## Deployment Gotchas
+
+Things that silently break first-time deploys — check these before running `wrangler pages deploy`.
+
+### Create the Pages project first
+
+`wrangler pages deploy` fails with "Project not found" on a new account — the project must exist before you deploy to it:
+
+```bash
+npx wrangler pages project create <project-name> --production-branch=main
+# Then deploy:
+npx wrangler pages deploy dist --project-name=<project-name>
+```
+
+Only needed once. After the project exists, `wrangler pages deploy` works normally.
+
+### R2 requires manual activation
+
+R2 is disabled by default. Attempting to create a bucket or deploying with an `[[r2_buckets]]` binding before activation causes error 10042.
+
+1. Go to [Cloudflare Dashboard → R2](https://dash.cloudflare.com/?to=/:account/r2) → **Enable R2**
+2. Then: `npx wrangler r2 bucket create <bucket-name>`
+3. Uncomment the `[[r2_buckets]]` binding in `wrangler.toml` and redeploy
+
+**Workaround while waiting:** comment out the `[[r2_buckets]]` binding so the app deploys without it. File uploads won't work, but the rest of the app will be live. Images in seeded data will still load from their original URLs.
+
+### D1 — copy the database_id into wrangler.toml
+
+`wrangler d1 create` prints the `database_id` in its output. Copy it immediately into `wrangler.toml`:
+
+```bash
+npx wrangler d1 create my-app-db
+# Output: database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "my-app-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # paste here
+```
+
+### Use `--remote` for D1 migrations
+
+`wrangler d1 execute` defaults to local (in-memory). Always add `--remote` to run against the real production database:
+
+```bash
+npx wrangler d1 execute my-app-db --remote --file=migrations/0001_initial.sql
+```
