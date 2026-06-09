@@ -9,7 +9,7 @@ A repeatable method for moving an app off whatever platform it was built on and 
 
 **This is a method, not a recipe.** There are countless source platforms and app shapes — don't assume you know the app before you've analyzed it.
 
-> **Acquire → Analyze → Classify → Plan → Provision → Transform → Migrate data → Verify**
+> **Acquire → Analyze → Classify → Plan → Provision → Transform → Deploy → Migrate data → Verify**
 
 Named platforms (Base44, Lovable, Bolt, V0, Replit, Firebase…) only change the *details* of the Analyze and Transform steps. The method handles a platform you've never seen just as well as a familiar one.
 
@@ -127,13 +127,12 @@ Create the agreed resources and wire bindings in `wrangler` config. Use the **`w
 **First-time deploy gotchas** — these are not well-surfaced in the docs:
 - Create the Pages project before first deploy: `wrangler pages project create <name> --production-branch=main` — `wrangler pages deploy` will fail with "Project not found" without this.
 - **R2 requires manual activation** in the Cloudflare Dashboard before any bucket can be created or any R2 binding deployed. If R2 isn't activated yet, comment it out of `wrangler` config, deploy without it, add it back after activation.
-- Always use `--remote` with `wrangler d1 execute` — the default runs against a local in-memory DB, not production.
 
 ---
 
 ## Phase 6: Transform the code
 
-1. **Introduce an abstraction layer.** Replace direct SDK imports with a thin client (`src/api/client.js` or similar) that calls your own Pages Functions / Workers. This converts "adapt" code to portable code without touching every component. Use the official `@cloudflare/workers-types` package and Cloudflare's Workers/Pages docs for code patterns.
+1. **Introduce an abstraction layer.** Replace direct SDK imports with a thin client (`src/api/client.js` or similar) that calls your own Pages Functions / Workers. This converts "adapt" code to portable code without touching every component. Use Cloudflare's official Workers/Pages SDK docs for code patterns.
 2. **Remove the lock-in surface.** Delete platform scaffolding, replace virtual modules or injected components with real files, rewrite hosted-only primitives as Workers/Pages Functions.
 3. **Rewrite server logic** as Pages Functions or Workers, one per capability.
 4. **Honor the runtime shape:**
@@ -143,13 +142,14 @@ Create the agreed resources and wire bindings in `wrangler` config. Use the **`w
 6. **Edge consistency:**
    - Write followed immediately by a dependent read → use the **D1 Sessions API** to pass a bookmark. See `workers-best-practices`.
    - Interactive transactions / RPCs → rewrite as `db.batch()` with statements prepared upfront.
+7. **Build and deploy:** `npm run build` (fix any errors), then `wrangler pages deploy dist` (SPA) or `wrangler deploy` (Worker). Use the `wrangler` skill for current deploy commands and flags.
 
 ---
 
 ## Phase 7: Migrate the data
 
 - **Convert the schema** to the target store. For SQL-to-D1 and NoSQL-to-SQL conversion, query the Docs MCP for current D1 type support and constraints.
-- **Seed the rows.** Generate individual or small-batch INSERTs — a single large multi-row INSERT can exceed D1's per-statement size and bound-parameter limits. For large tables use D1's file/CSV import. Confirm current limits via the Docs MCP.
+- **Seed the rows.** Generate individual or small-batch INSERTs — a single large multi-row INSERT can exceed D1's per-statement size and bound-parameter limits. For large tables use D1's file/CSV import. Confirm current limits via the Docs MCP. Always use `--remote` with `wrangler d1 execute` — the default runs against a local in-memory DB, not production.
 - **Move blobs out of the DB.** Inline base64/binary columns exceed D1's per-row cap — upload to R2, store only the object key in D1.
 - Preserve hidden system fields (IDs, timestamps, ownership) even when they weren't in the visible schema.
 
