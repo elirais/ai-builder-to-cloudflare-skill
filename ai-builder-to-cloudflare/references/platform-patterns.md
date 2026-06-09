@@ -1,6 +1,8 @@
-# Platform-Specific Migration Patterns
+# Known-Platform Playbooks
 
-Each AI app builder platform has its own SDK and conventions. This reference maps the exact SDK calls to their Cloudflare replacements.
+Accelerators for the general migration method in SKILL.md. When the source platform is one of these, use the playbook to jump-start **Phase 2 (Analyze)**, **Phase 3 (Classify)**, and **Phase 6 (Transform)** — the delete lists, SDK→Cloudflare call maps, and transform gotchas are already worked out here.
+
+These are starting points, not the whole job: every app deviates from its platform's defaults, so still run the method's analysis phases to catch app-specific behavior. If the source platform isn't listed, you don't need a playbook — the method in SKILL.md is sufficient on its own.
 
 ## Table of Contents
 

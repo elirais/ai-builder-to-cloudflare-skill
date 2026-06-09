@@ -1,8 +1,10 @@
-# AI Builder to Cloudflare — Claude Code Skill
+# App to Cloudflare — Claude Code Skill
 
-Migrate apps from **Base44**, **Lovable**, **Bolt.new**, **V0**, or **Replit** to Cloudflare Pages + Workers AI + D1 + R2.
+A general method for migrating an app off **any** hosted platform — AI app builders, no-code/low-code tools, or hosted backends — and onto Cloudflare (Pages/Workers + D1 + R2 + Workers AI).
 
-One skill. Five platforms. Full migration — schema, SDK calls, infrastructure, deploy.
+Not a recipe for five platforms — a repeatable method that works for a source you've never seen:
+
+> **Acquire → Analyze → Classify → Plan → Provision → Transform → Migrate data → Verify**
 
 ## Install
 
@@ -10,24 +12,25 @@ One skill. Five platforms. Full migration — schema, SDK calls, infrastructure,
 npx skills add elirais/ai-builder-to-cloudflare-skill
 ```
 
-Once installed, the skill loads automatically when you ask Claude to migrate — nothing else to configure.
+Loads automatically when you ask Claude to migrate — nothing to configure.
 
 ## Use
 
 ```
-> Migrate this Lovable app to Cloudflare
-> I want to get off Base44
-> Replace Supabase with Cloudflare D1 and R2
+> Migrate this app to Cloudflare
+> I want to get off <platform>
+> Replace our hosted backend with Cloudflare D1 and R2
 ```
 
-The skill auto-detects your platform from imports and walks through 6 phases: detect → discover → infrastructure → schema → code transform → deploy.
+The skill analyzes what the app does and what it runs on, decides what to reuse vs rewrite, designs the Cloudflare target, plans it with you, then executes and verifies.
 
-## What's Inside
+## How it works
 
-- **5 platform SDKs** — exact migration patterns for Base44, Supabase (Lovable/Bolt), Next.js (V0), Replit
-- **Schema conversion** — MongoDB + PostgreSQL → D1 SQLite
-- **Workers AI gotchas** — thinking mode, vision format, response parsing
-- **Ready-to-use templates** — Pages Functions for AI, CRUD, uploads, auth, CORS
+- **Source-agnostic.** Builds a real dependency inventory instead of assuming a template — so it handles platforms it's never seen.
+- **Reuse-aware.** Buckets the codebase into keep / adapt / replace so you don't rewrite what already works.
+- **Plans before it builds.** Produces a migration plan for sign-off before provisioning anything.
+- **Defers to Cloudflare's own docs & skills** for current limits, pricing, models, and APIs — nothing stale baked in.
+- **Known-platform playbooks** (Base44, Lovable, Bolt, V0, Replit, Supabase…) give a head start when the source is recognized — as accelerators, not the structure.
 
 ## License
 
