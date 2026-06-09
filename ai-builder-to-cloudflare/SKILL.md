@@ -40,6 +40,61 @@ grep -r "@replit/\|replit\.dev\|REPL_" src/ --include="*.js" --include="*.jsx" -
 
 Then read the platform-specific reference for that platform's SDK patterns and how they map to Cloudflare: [platform-patterns.md](references/platform-patterns.md).
 
+## Step 1: Get the Code & Data
+
+Before touching anything, get the source code and a copy of the live data. Both are needed for the migration.
+
+### Get the source code
+
+Every platform has a way to export code. Try in this order:
+
+**Via MCP (fastest — if the platform has a Claude MCP server connected):**
+```
+Ask Claude: "Export the source code for app <id> via the Base44/Lovable/etc. MCP"
+```
+Claude can read files and entity schemas directly through the MCP connection — no manual download needed.
+
+**Via GitHub (most common):**
+Most AI builders sync your project to a GitHub repo automatically. Check:
+- Base44: Settings → GitHub → connect or view repo
+- Lovable: Project → Export → GitHub (or the repo is auto-created under your account)
+- Bolt.new: Download as zip or push to GitHub via the UI
+- V0: Already Next.js — clone the repo or download from the dashboard
+
+Then clone it:
+```bash
+git clone https://github.com/your-username/your-app-repo
+```
+
+**Via platform zip export:**
+All platforms have a "Download code" or "Export project" button. Download and unzip locally.
+
+### Export the live data
+
+Don't skip this — the app's data is in the platform's backend, and you need it to seed D1.
+
+**Base44 (via MCP — preferred):**
+If the Base44 MCP is connected, Claude can query entities directly:
+```
+Ask Claude: "Query all records from the Lesson, Material, etc. entities in app <id> and save as seed SQL"
+```
+
+**Base44 (manual export):**
+Use the Base44 admin panel → Data → Export, or call the API:
+```bash
+curl "https://api.base44.com/api/apps/<app-id>/entities/<entity-name>" \
+  -H "Authorization: Bearer <token>" | jq '.'
+```
+
+**Supabase (Lovable/Bolt):**
+```bash
+# Export each table
+supabase db dump --data-only -f seed.sql
+# Or via dashboard: Table Editor → Export → CSV per table
+```
+
+**General rule:** Export every table as INSERT statements into `migrations/0002_seed.sql`. For tables with more than 500 rows, batch the inserts.
+
 ## Phase 1: Discovery & Inventory
 
 **Goal:** Catalog every backend service the app uses.
